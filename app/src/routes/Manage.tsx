@@ -2,9 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
+import { useManifestStore } from '../stores/manifest';
 import { GitHubClient, PATInvalidError } from '../lib/github';
 import { REPO_NAME, REPO_OWNER } from '../config';
 import UploadModal from '../components/UploadModal';
+import ManageFileCard from '../components/ManageFileCard';
+import RenameModal from '../components/RenameModal';
+import MoveFolderModal from '../components/MoveFolderModal';
+import TagsModal from '../components/TagsModal';
+import DeleteModal from '../components/DeleteModal';
+import type { FileEntry } from '../types';
+
+type EditMode = 'rename' | 'folder' | 'tags' | 'delete';
 
 function filterHtmlFiles(files: FileList | File[]): File[] {
   return Array.from(files).filter((f) => /\.html?$/i.test(f.name));
@@ -16,12 +25,22 @@ export default function ManageRoute() {
   const setUsername = useAuthStore((s) => s.setUsername);
   const clearPat = useAuthStore((s) => s.clearPat);
 
+  const manifest = useManifestStore((s) => s.manifest);
+  const isLoading = useManifestStore((s) => s.isLoading);
+  const error = useManifestStore((s) => s.error);
+  const fetchManifest = useManifestStore((s) => s.fetch);
+
   const [uploadOpen, setUploadOpen] = useState(false);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [queue, setQueue] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejected, setDragRejected] = useState<string | null>(null);
   const dragCounter = useRef(0);
+
+  const [editing, setEditing] = useState<{
+    entry: FileEntry;
+    mode: EditMode;
+  } | null>(null);
 
   useEffect(() => {
     if (!pat || username) return;
@@ -41,6 +60,18 @@ export default function ManageRoute() {
       cancelled = true;
     };
   }, [pat, username, setUsername, clearPat]);
+
+  useEffect(() => {
+    if (!manifest && !isLoading) {
+      void fetchManifest();
+    }
+  }, [manifest, isLoading, fetchManifest]);
+
+  const sortedFiles = manifest
+    ? [...manifest.files].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      )
+    : [];
 
   const startQueue = useCallback((files: File[]) => {
     if (files.length === 0) return;
@@ -71,7 +102,7 @@ export default function ManageRoute() {
 
   const onDragEnter = (e: DragEvent<HTMLElement>) => {
     if (!e.dataTransfer?.types.includes('Files')) return;
-    if (uploadOpen) return;
+    if (uploadOpen || editing) return;
     e.preventDefault();
     dragCounter.current += 1;
     setIsDragging(true);
@@ -80,19 +111,19 @@ export default function ManageRoute() {
 
   const onDragOver = (e: DragEvent<HTMLElement>) => {
     if (!e.dataTransfer?.types.includes('Files')) return;
-    if (uploadOpen) return;
+    if (uploadOpen || editing) return;
     e.preventDefault();
   };
 
   const onDragLeave = (e: DragEvent<HTMLElement>) => {
-    if (uploadOpen) return;
+    if (uploadOpen || editing) return;
     e.preventDefault();
     dragCounter.current = Math.max(0, dragCounter.current - 1);
     if (dragCounter.current === 0) setIsDragging(false);
   };
 
   const onDrop = (e: DragEvent<HTMLElement>) => {
-    if (uploadOpen) return;
+    if (uploadOpen || editing) return;
     e.preventDefault();
     dragCounter.current = 0;
     setIsDragging(false);
@@ -113,9 +144,9 @@ export default function ManageRoute() {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="mx-auto max-w-3xl px-4 py-12">
-        <header className="flex items-baseline justify-between mb-8">
-          <h1 className="text-2xl font-semibold">Manage</h1>
+      <div className="mx-auto max-w-6xl px-4 py-8 md:py-12">
+        <header className="mb-6 flex items-baseline justify-between md:mb-8">
+          <h1 className="text-2xl font-semibold md:text-3xl">Manage</h1>
           <div className="flex items-center gap-3 text-sm text-slate-500">
             {username && <span>{username}</span>}
             <Link
@@ -146,12 +177,44 @@ export default function ManageRoute() {
           </div>
         )}
 
-        <section className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
-          <p>
-            Phase 3 までで実装済み: アップロード、トップ一覧表示。
-            編集（リネーム/フォルダ/タグ/削除）は Phase 4 で追加予定です。
-          </p>
-        </section>
+        {error && (
+          <div className="mb-4 rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            読み込みエラー: {error.message}
+            <button
+              type="button"
+              onClick={() => void fetchManifest()}
+              className="ml-2 underline"
+            >
+              再試行
+            </button>
+          </div>
+        )}
+
+        {isLoading && !manifest && (
+          <p className="text-sm text-slate-500">読み込み中…</p>
+        )}
+
+        {manifest && sortedFiles.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-10 text-center text-sm text-slate-500">
+            まだファイルがありません。上の「+ 新規アップロード」または D&amp;D で追加してください。
+          </div>
+        )}
+
+        {sortedFiles.length > 0 && (
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {sortedFiles.map((entry) => (
+              <li key={entry.id}>
+                <ManageFileCard
+                  entry={entry}
+                  onRename={() => setEditing({ entry, mode: 'rename' })}
+                  onMoveFolder={() => setEditing({ entry, mode: 'folder' })}
+                  onEditTags={() => setEditing({ entry, mode: 'tags' })}
+                  onDelete={() => setEditing({ entry, mode: 'delete' })}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
 
         <UploadModal
           open={uploadOpen}
@@ -161,6 +224,31 @@ export default function ManageRoute() {
           queueRemaining={queue.length}
           onNext={queue.length > 0 ? onModalNext : undefined}
         />
+
+        {editing?.mode === 'rename' && (
+          <RenameModal
+            entry={editing.entry}
+            onClose={() => setEditing(null)}
+          />
+        )}
+        {editing?.mode === 'folder' && (
+          <MoveFolderModal
+            entry={editing.entry}
+            onClose={() => setEditing(null)}
+          />
+        )}
+        {editing?.mode === 'tags' && (
+          <TagsModal
+            entry={editing.entry}
+            onClose={() => setEditing(null)}
+          />
+        )}
+        {editing?.mode === 'delete' && (
+          <DeleteModal
+            entry={editing.entry}
+            onClose={() => setEditing(null)}
+          />
+        )}
       </div>
 
       {isDragging && (

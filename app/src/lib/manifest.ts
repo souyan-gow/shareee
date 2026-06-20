@@ -19,6 +19,34 @@ export function addEntry(manifest: Manifest, entry: FileEntry): Manifest {
   };
 }
 
+export type EntryPatch = Partial<
+  Omit<FileEntry, 'id' | 'uploadedAt' | 'updatedAt'>
+>;
+
+export function updateEntry(
+  manifest: Manifest,
+  id: string,
+  patch: EntryPatch,
+): Manifest {
+  const now = new Date().toISOString();
+  return {
+    ...manifest,
+    updatedAt: now,
+    files: manifest.files.map((f) =>
+      f.id === id ? { ...f, ...patch, updatedAt: now } : f,
+    ),
+  };
+}
+
+export function removeEntry(manifest: Manifest, id: string): Manifest {
+  const now = new Date().toISOString();
+  return {
+    ...manifest,
+    updatedAt: now,
+    files: manifest.files.filter((f) => f.id !== id),
+  };
+}
+
 export function serializeManifest(manifest: Manifest): string {
   return JSON.stringify(manifest, null, 2) + '\n';
 }

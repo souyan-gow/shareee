@@ -122,6 +122,33 @@ export class GitHubClient {
     );
   }
 
+  async listFilesByPrefix(
+    prefix: string,
+    branch: string,
+  ): Promise<string[]> {
+    const ref = await this.request<{ object: { sha: string } }>(
+      `/repos/${this.owner}/${this.repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+    );
+    const commit = await this.request<{ tree: { sha: string } }>(
+      `/repos/${this.owner}/${this.repo}/git/commits/${ref.object.sha}`,
+    );
+    const tree = await this.request<{
+      tree: Array<{ path: string; type: string }>;
+      truncated: boolean;
+    }>(
+      `/repos/${this.owner}/${this.repo}/git/trees/${commit.tree.sha}?recursive=1`,
+    );
+    if (tree.truncated) {
+      throw new GitHubAPIError(
+        'リポジトリの tree が大きすぎて Git Data API で列挙できません',
+        200,
+      );
+    }
+    return tree.tree
+      .filter((e) => e.type === 'blob' && e.path.startsWith(prefix))
+      .map((e) => e.path);
+  }
+
   async commitFiles(params: CommitParams): Promise<{ sha: string }> {
     const { branch, message, files, deletions } = params;
 
