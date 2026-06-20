@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-20T03:59:13.948Z",
+  "updatedAt": "2026-06-20T10:03:11.353Z",
   "files": [
     {
       "id": "01KVHJXFYCKC7NHAAAZ26WGC4Z",
@@ -14,6 +14,21 @@
       "uploadedAt": "2026-06-20T03:59:12.332Z",
       "updatedAt": "2026-06-20T03:59:12.332Z",
       "size": 127,
+      "uploader": "souyan-gow",
+      "thumbnail": null
+    },
+    {
+      "id": "01KVJ7QYCA13YP6K1XVQ2H2B72",
+      "displayName": "test2",
+      "folder": "/projets/test",
+      "tags": [
+        "test"
+      ],
+      "entryPath": "index.html",
+      "kind": "single",
+      "uploadedAt": "2026-06-20T10:03:10.602Z",
+      "updatedAt": "2026-06-20T10:03:10.602Z",
+      "size": 128,
       "uploader": "souyan-gow",
       "thumbnail": null
     }
