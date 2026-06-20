@@ -1,12 +1,27 @@
-function App() {
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BASE_URL } from './config';
+import IndexRoute from './routes/Index';
+import ManageRoute from './routes/Manage';
+import SetupRoute from './routes/Setup';
+import RequirePAT from './routes/RequirePAT';
+
+const basename = BASE_URL.replace(/\/$/, '') || '/';
+
+export default function App() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-800">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold mb-2">HTML Vault</h1>
-        <p className="text-slate-500">Phase 0 セットアップ完了</p>
-      </div>
-    </main>
+    <BrowserRouter basename={basename}>
+      <Routes>
+        <Route path="/" element={<IndexRoute />} />
+        <Route path="/manage/setup" element={<SetupRoute />} />
+        <Route
+          path="/manage"
+          element={
+            <RequirePAT>
+              <ManageRoute />
+            </RequirePAT>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;

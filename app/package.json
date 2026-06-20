@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node -e \"require('fs').rmSync('../assets', {recursive:true, force:true})\"",
     "build": "tsc -b && vite build",
+    "postbuild": "node -e \"require('fs').copyFileSync('../index.html', '../404.html')\"",
     "lint": "eslint .",
     "preview": "vite preview"
   },
