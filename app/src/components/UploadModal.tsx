@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
+import { useManifestStore } from '../stores/manifest';
 import { DEFAULT_BRANCH, PAGES_SITE_URL, REPO_NAME, REPO_OWNER } from '../config';
 import {
   GitHubAPIError,
@@ -51,6 +52,7 @@ function sleep(ms: number) {
 export default function UploadModal({ open, onClose, uploader }: Props) {
   const pat = useAuthStore((s) => s.pat);
   const clearPat = useAuthStore((s) => s.clearPat);
+  const addFile = useManifestStore((s) => s.addFile);
 
   const [file, setFile] = useState<File | null>(null);
   const [displayName, setDisplayName] = useState('');
@@ -133,6 +135,8 @@ export default function UploadModal({ open, onClose, uploader }: Props) {
           { path: 'manifest.json', content: serializeManifest(next) },
         ],
       });
+
+      addFile(entry);
 
       setSubStep('waiting-pages');
       await waitForPagesBuild(client, commit.sha, (s) => setPagesStatus(s));
