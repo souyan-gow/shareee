@@ -17,6 +17,9 @@ type Props = {
   open: boolean;
   onClose: () => void;
   uploader: string | null;
+  initialFile?: File | null;
+  queueRemaining?: number;
+  onNext?: () => void;
 };
 
 type SubStep =
@@ -49,7 +52,14 @@ function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
-export default function UploadModal({ open, onClose, uploader }: Props) {
+export default function UploadModal({
+  open,
+  onClose,
+  uploader,
+  initialFile,
+  queueRemaining = 0,
+  onNext,
+}: Props) {
   const pat = useAuthStore((s) => s.pat);
   const clearPat = useAuthStore((s) => s.clearPat);
   const addFile = useManifestStore((s) => s.addFile);
@@ -78,6 +88,19 @@ export default function UploadModal({ open, onClose, uploader }: Props) {
       setErrorMessage(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !initialFile) return;
+    setFile(initialFile);
+    setDisplayName(initialFile.name.replace(/\.html?$/i, ''));
+    setFolder('');
+    setTagsInput('');
+    setPhase('form');
+    setSubStep('reading');
+    setPagesStatus(null);
+    setViewerUrl(null);
+    setErrorMessage(null);
+  }, [open, initialFile]);
 
   const onFileChange = (f: File | null) => {
     setFile(f);
@@ -189,6 +212,11 @@ export default function UploadModal({ open, onClose, uploader }: Props) {
                 : phase === 'done'
                   ? '完了'
                   : 'エラー'}
+            {queueRemaining > 0 && (phase === 'form' || phase === 'done') && (
+              <span className="ml-2 text-xs font-normal text-slate-500">
+                （あと {queueRemaining} 件）
+              </span>
+            )}
           </h2>
           <button
             type="button"
@@ -257,18 +285,28 @@ export default function UploadModal({ open, onClose, uploader }: Props) {
             <>
               <button
                 type="button"
-                onClick={resetForAnother}
-                className="rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-              >
-                もう一つアップロード
-              </button>
-              <button
-                type="button"
                 onClick={onClose}
-                className="rounded bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900"
+                className="rounded px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
               >
                 閉じる
               </button>
+              {queueRemaining > 0 && onNext ? (
+                <button
+                  type="button"
+                  onClick={onNext}
+                  className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  次のファイル（残り {queueRemaining} 件）
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resetForAnother}
+                  className="rounded bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900"
+                >
+                  もう一つアップロード
+                </button>
+              )}
             </>
           )}
           {phase === 'error' && (
