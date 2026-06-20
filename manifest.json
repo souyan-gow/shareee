@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-20T10:21:01.706Z",
+  "updatedAt": "2026-06-20T10:24:13.332Z",
   "files": [
     {
       "id": "01KVHJXFYCKC7NHAAAZ26WGC4Z",
@@ -41,6 +41,19 @@
       "kind": "single",
       "uploadedAt": "2026-06-20T10:21:01.222Z",
       "updatedAt": "2026-06-20T10:21:01.222Z",
+      "size": 139,
+      "uploader": "souyan-gow",
+      "thumbnail": null
+    },
+    {
+      "id": "01KVJ8YF6RXFGAW3Z2GXDTFDF2",
+      "displayName": "test3",
+      "folder": "",
+      "tags": [],
+      "entryPath": "index.html",
+      "kind": "single",
+      "uploadedAt": "2026-06-20T10:24:13.016Z",
+      "updatedAt": "2026-06-20T10:24:13.016Z",
       "size": 139,
       "uploader": "souyan-gow",
       "thumbnail": null
