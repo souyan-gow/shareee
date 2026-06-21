@@ -37,6 +37,8 @@ export type PagesBuildStatus = {
   status: 'building' | 'built' | 'errored' | string;
   commit: string;
   error: { message: string | null } | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 function utf8ToBase64(str: string): string {

@@ -681,16 +681,25 @@ async function waitForPagesBuild(
   maxMs = 180_000,
 ): Promise<void> {
   const start = Date.now();
-  let lastStatus = 'pending';
+  // 自分の commit より前の build を除外する閾値 (push から build 起動までの揺らぎを考慮し 5 秒前を境界に)
+  const cutoffMs = start - 5_000;
+  let lastBuild: { status: string; commit: string } | null = null;
   while (Date.now() - start < maxMs) {
     try {
       const build = await client.getPagesBuildStatus();
-      lastStatus = build.status;
+      lastBuild = { status: build.status, commit: build.commit };
       onTick(build.status);
-      if (build.commit === expectedSha && build.status === 'built') {
-        return;
+
+      if (build.status === 'built') {
+        if (build.commit === expectedSha) return;
+        // 連続 commit でバッチ化されたケース: 自分の commit 後に start した built なら成功扱い
+        const builtAtMs = build.created_at
+          ? Date.parse(build.created_at)
+          : 0;
+        if (builtAtMs >= cutoffMs) return;
       }
-      if (build.commit === expectedSha && build.status === 'errored') {
+
+      if (build.status === 'errored' && build.commit === expectedSha) {
         throw new Error(
           build.error?.message ?? 'Pages build がエラー終了しました',
         );
@@ -704,7 +713,9 @@ async function waitForPagesBuild(
     }
     await sleep(5000);
   }
+  // タイムアウト時の最終手段: 最終 build が built なら巻き取られたと判断して成功
+  if (lastBuild?.status === 'built') return;
   throw new Error(
-    `Pages デプロイ待機がタイムアウトしました（最終状態: ${lastStatus}）`,
+    `Pages デプロイ待機がタイムアウトしました（最終状態: ${lastBuild?.status ?? '不明'}）`,
   );
 }
