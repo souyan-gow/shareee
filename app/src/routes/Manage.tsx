@@ -15,8 +15,8 @@ import type { FileEntry } from '../types';
 
 type EditMode = 'rename' | 'folder' | 'tags' | 'delete';
 
-function filterHtmlFiles(files: FileList | File[]): File[] {
-  return Array.from(files).filter((f) => /\.html?$/i.test(f.name));
+function filterAcceptedFiles(files: FileList | File[]): File[] {
+  return Array.from(files).filter((f) => /\.(html?|zip)$/i.test(f.name));
 }
 
 export default function ManageRoute() {
@@ -127,13 +127,13 @@ export default function ManageRoute() {
     e.preventDefault();
     dragCounter.current = 0;
     setIsDragging(false);
-    const htmls = filterHtmlFiles(e.dataTransfer?.files ?? []);
-    if (htmls.length === 0) {
-      setDragRejected('HTML ファイル (.html / .htm) のみ受け付けます');
+    const accepted = filterAcceptedFiles(e.dataTransfer?.files ?? []);
+    if (accepted.length === 0) {
+      setDragRejected('対応形式 (.html / .htm / .zip) のみ受け付けます');
       return;
     }
     setDragRejected(null);
-    startQueue(htmls);
+    startQueue(accepted);
   };
 
   return (
@@ -167,7 +167,7 @@ export default function ManageRoute() {
             + 新規アップロード
           </button>
           <span className="hidden text-xs text-slate-400 sm:inline">
-            または HTML ファイルを画面にドロップ
+            または .html / .zip を画面にドロップ
           </span>
         </div>
 
@@ -255,7 +255,7 @@ export default function ManageRoute() {
         <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-[1px]">
           <div className="rounded-xl border-2 border-dashed border-blue-400 bg-white/90 px-10 py-8 shadow-xl">
             <p className="text-lg font-semibold text-slate-800">
-              ここに HTML ファイルをドロップ
+              ここに .html / .zip ファイルをドロップ
             </p>
             <p className="mt-1 text-xs text-slate-500">
               複数ファイルは 1 件ずつ順次アップロードします

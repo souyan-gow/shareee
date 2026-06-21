@@ -6,12 +6,19 @@ import {
   GitHubAPIError,
   GitHubClient,
   PATInvalidError,
+  type CommitFileInput,
 } from '../lib/github';
 import { addEntry, fetchManifest, serializeManifest } from '../lib/manifest';
 import { injectNoindex } from '../lib/html-processor';
 import { generateId } from '../lib/ulid';
 import { normalizeFolder, parseTags } from '../lib/folder';
-import type { FileEntry } from '../types';
+import {
+  extractZip,
+  findEntryPointCandidates,
+  totalSize,
+  type ZipFileNode,
+} from '../lib/zip';
+import type { FileEntry, FileKind } from '../types';
 
 type Props = {
   open: boolean;
@@ -30,6 +37,12 @@ type SubStep =
   | 'waiting-pages';
 
 type Phase = 'form' | 'processing' | 'done' | 'error';
+
+type ZipState = {
+  nodes: ZipFileNode[];
+  candidates: string[];
+  selectedEntry: string;
+};
 
 const STEPS: { key: SubStep; label: string }[] = [
   { key: 'reading', label: 'ファイル読み込み' },
@@ -52,6 +65,16 @@ function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
+function detectKind(name: string): FileKind | null {
+  if (/\.zip$/i.test(name)) return 'zip';
+  if (/\.html?$/i.test(name)) return 'single';
+  return null;
+}
+
+function stripExt(name: string): string {
+  return name.replace(/\.(zip|html?)$/i, '');
+}
+
 export default function UploadModal({
   open,
   onClose,
@@ -62,12 +85,15 @@ export default function UploadModal({
 }: Props) {
   const pat = useAuthStore((s) => s.pat);
   const clearPat = useAuthStore((s) => s.clearPat);
-  const addFile = useManifestStore((s) => s.addFile);
+  const addFileLocal = useManifestStore((s) => s.addFile);
 
   const [file, setFile] = useState<File | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [folder, setFolder] = useState('');
   const [tagsInput, setTagsInput] = useState('');
+  const [zipState, setZipState] = useState<ZipState | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('form');
   const [subStep, setSubStep] = useState<SubStep>('reading');
@@ -81,6 +107,9 @@ export default function UploadModal({
       setDisplayName('');
       setFolder('');
       setTagsInput('');
+      setZipState(null);
+      setExtracting(false);
+      setFileError(null);
       setPhase('form');
       setSubStep('reading');
       setPagesStatus(null);
@@ -91,8 +120,7 @@ export default function UploadModal({
 
   useEffect(() => {
     if (!open || !initialFile) return;
-    setFile(initialFile);
-    setDisplayName(initialFile.name.replace(/\.html?$/i, ''));
+    void handleFileChange(initialFile, { resetDisplayName: true });
     setFolder('');
     setTagsInput('');
     setPhase('form');
@@ -100,20 +128,59 @@ export default function UploadModal({
     setPagesStatus(null);
     setViewerUrl(null);
     setErrorMessage(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialFile]);
 
-  const onFileChange = (f: File | null) => {
+  async function handleFileChange(
+    f: File | null,
+    opts: { resetDisplayName?: boolean } = {},
+  ) {
     setFile(f);
-    if (f && !displayName.trim()) {
-      const stem = f.name.replace(/\.html?$/i, '');
-      setDisplayName(stem);
-    }
-  };
+    setZipState(null);
+    setFileError(null);
+    setExtracting(false);
 
-  const canSubmit = useMemo(
-    () => phase === 'form' && !!file && !!displayName.trim() && !!pat,
-    [phase, file, displayName, pat],
-  );
+    if (!f) return;
+
+    const kind = detectKind(f.name);
+    if (!kind) {
+      setFileError('対応形式は .html / .htm / .zip です');
+      return;
+    }
+
+    if (opts.resetDisplayName || !displayName.trim()) {
+      setDisplayName(stripExt(f.name));
+    }
+
+    if (kind === 'zip') {
+      setExtracting(true);
+      try {
+        const nodes = await extractZip(f);
+        const candidates = findEntryPointCandidates(nodes);
+        if (candidates.length === 0) {
+          setFileError('zip 内に HTML ファイルが見つかりませんでした');
+          return;
+        }
+        setZipState({ nodes, candidates, selectedEntry: candidates[0] });
+      } catch (e) {
+        setFileError(
+          e instanceof Error ? `zip 解凍に失敗: ${e.message}` : 'zip 解凍に失敗',
+        );
+      } finally {
+        setExtracting(false);
+      }
+    }
+  }
+
+  const kind = file ? detectKind(file.name) : null;
+
+  const canSubmit = useMemo(() => {
+    if (phase !== 'form') return false;
+    if (!file || !pat || !displayName.trim()) return false;
+    if (fileError) return false;
+    if (kind === 'zip' && !zipState) return false;
+    return true;
+  }, [phase, file, pat, displayName, fileError, kind, zipState]);
 
   const runUpload = async () => {
     if (!file || !pat) return;
@@ -124,20 +191,59 @@ export default function UploadModal({
     const client = new GitHubClient(pat, REPO_OWNER, REPO_NAME);
 
     try {
-      const raw = await file.text();
-
-      setSubStep('injecting');
-      const injected = injectNoindex(raw);
-
       const id = generateId();
       const now = new Date().toISOString();
+
+      let injected: string;
+      let entryPath: string;
+      let filesToCommit: CommitFileInput[];
+      let resultKind: FileKind;
+
+      if (kind === 'zip' && zipState) {
+        const entryNode = zipState.nodes.find(
+          (n) => n.path === zipState.selectedEntry,
+        );
+        if (!entryNode) {
+          throw new Error('エントリポイントの内容が取得できません');
+        }
+        setSubStep('injecting');
+        const rawHtml = new TextDecoder('utf-8').decode(entryNode.content);
+        injected = injectNoindex(rawHtml);
+        entryPath = zipState.selectedEntry;
+        resultKind = 'zip';
+        filesToCommit = zipState.nodes.map((n) => {
+          if (n.path === entryPath) {
+            return {
+              path: `files/${id}/${n.path}`,
+              content: injected,
+            };
+          }
+          return {
+            path: `files/${id}/${n.path}`,
+            content: n.content,
+          };
+        });
+      } else {
+        const raw = await file.text();
+        setSubStep('injecting');
+        injected = injectNoindex(raw);
+        entryPath = 'index.html';
+        resultKind = 'single';
+        filesToCommit = [
+          {
+            path: `files/${id}/index.html`,
+            content: injected,
+          },
+        ];
+      }
+
       const entry: FileEntry = {
         id,
         displayName: displayName.trim(),
         folder: normalizeFolder(folder),
         tags: parseTags(tagsInput),
-        entryPath: 'index.html',
-        kind: 'single',
+        entryPath,
+        kind: resultKind,
         uploadedAt: now,
         updatedAt: now,
         size: new Blob([injected]).size,
@@ -149,22 +255,24 @@ export default function UploadModal({
       const { manifest } = await fetchManifest(client, DEFAULT_BRANCH);
       const next = addEntry(manifest, entry);
 
+      filesToCommit.push({
+        path: 'manifest.json',
+        content: serializeManifest(next),
+      });
+
       setSubStep('committing');
       const commit = await client.commitFiles({
         branch: DEFAULT_BRANCH,
         message: `feat: add ${entry.displayName} (${id})`,
-        files: [
-          { path: `files/${id}/index.html`, content: injected },
-          { path: 'manifest.json', content: serializeManifest(next) },
-        ],
+        files: filesToCommit,
       });
 
-      addFile(entry);
+      addFileLocal(entry);
 
       setSubStep('waiting-pages');
       await waitForPagesBuild(client, commit.sha, (s) => setPagesStatus(s));
 
-      setViewerUrl(`${PAGES_SITE_URL}/files/${id}/index.html`);
+      setViewerUrl(`${PAGES_SITE_URL}/files/${id}/${entryPath}`);
       setPhase('done');
     } catch (e) {
       if (e instanceof PATInvalidError) {
@@ -191,6 +299,8 @@ export default function UploadModal({
     setDisplayName('');
     setFolder('');
     setTagsInput('');
+    setZipState(null);
+    setFileError(null);
     setPhase('form');
     setSubStep('reading');
     setPagesStatus(null);
@@ -229,17 +339,25 @@ export default function UploadModal({
           </button>
         </header>
 
-        <div className="px-5 py-4 text-sm text-slate-700">
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 text-sm text-slate-700">
           {phase === 'form' && (
             <FormBody
               file={file}
               displayName={displayName}
               folder={folder}
               tagsInput={tagsInput}
-              onFileChange={onFileChange}
+              zipState={zipState}
+              extracting={extracting}
+              fileError={fileError}
+              onFileChange={(f) => void handleFileChange(f)}
               onDisplayNameChange={setDisplayName}
               onFolderChange={setFolder}
               onTagsChange={setTagsInput}
+              onSelectEntry={(p) =>
+                setZipState((zs) =>
+                  zs ? { ...zs, selectedEntry: p } : zs,
+                )
+              }
             />
           )}
 
@@ -247,9 +365,7 @@ export default function UploadModal({
             <ProgressBody current={subStep} pagesStatus={pagesStatus} />
           )}
 
-          {phase === 'done' && viewerUrl && (
-            <DoneBody url={viewerUrl} />
-          )}
+          {phase === 'done' && viewerUrl && <DoneBody url={viewerUrl} />}
 
           {phase === 'error' && errorMessage && (
             <ErrorBody message={errorMessage} />
@@ -338,10 +454,14 @@ type FormBodyProps = {
   displayName: string;
   folder: string;
   tagsInput: string;
+  zipState: ZipState | null;
+  extracting: boolean;
+  fileError: string | null;
   onFileChange: (f: File | null) => void;
   onDisplayNameChange: (s: string) => void;
   onFolderChange: (s: string) => void;
   onTagsChange: (s: string) => void;
+  onSelectEntry: (path: string) => void;
 };
 
 function FormBody({
@@ -349,20 +469,27 @@ function FormBody({
   displayName,
   folder,
   tagsInput,
+  zipState,
+  extracting,
+  fileError,
   onFileChange,
   onDisplayNameChange,
   onFolderChange,
   onTagsChange,
+  onSelectEntry,
 }: FormBodyProps) {
   return (
     <div className="space-y-4">
       <label className="block">
         <span className="block text-xs font-semibold text-slate-600">
-          HTML ファイル <span className="text-rose-600">*</span>
+          ファイル <span className="text-rose-600">*</span>
+          <span className="ml-1 font-normal text-slate-400">
+            (.html / .htm / .zip)
+          </span>
         </span>
         <input
           type="file"
-          accept=".html,.htm"
+          accept=".html,.htm,.zip"
           onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
           className="mt-1 block w-full text-sm"
         />
@@ -371,7 +498,15 @@ function FormBody({
             {file.name}（{(file.size / 1024).toFixed(1)} KB）
           </p>
         )}
+        {extracting && (
+          <p className="mt-1 text-xs text-blue-600">zip を解凍中…</p>
+        )}
+        {fileError && (
+          <p className="mt-1 text-xs text-rose-700">{fileError}</p>
+        )}
       </label>
+
+      {zipState && <ZipSummary state={zipState} onSelectEntry={onSelectEntry} />}
 
       <label className="block">
         <span className="block text-xs font-semibold text-slate-600">
@@ -410,6 +545,60 @@ function FormBody({
           className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </label>
+    </div>
+  );
+}
+
+function ZipSummary({
+  state,
+  onSelectEntry,
+}: {
+  state: ZipState;
+  onSelectEntry: (path: string) => void;
+}) {
+  const sizeKB = (totalSize(state.nodes) / 1024).toFixed(1);
+  return (
+    <div className="space-y-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs">
+      <div>
+        <p className="font-semibold text-slate-700">
+          zip 内のファイル ({state.nodes.length} 件, 合計 {sizeKB} KB)
+        </p>
+        <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto rounded bg-white p-2 font-mono text-slate-600">
+          {state.nodes.slice(0, 50).map((n) => (
+            <li key={n.path} className="truncate">
+              {n.path}
+            </li>
+          ))}
+          {state.nodes.length > 50 && (
+            <li className="text-slate-400">
+              …ほか {state.nodes.length - 50} 件
+            </li>
+          )}
+        </ul>
+      </div>
+
+      <div>
+        <p className="font-semibold text-slate-700">エントリポイント</p>
+        {state.candidates.length === 1 ? (
+          <p className="mt-1 font-mono text-slate-600">{state.candidates[0]}</p>
+        ) : (
+          <ul className="mt-1 space-y-1">
+            {state.candidates.map((c) => (
+              <li key={c}>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="entry-point"
+                    checked={state.selectedEntry === c}
+                    onChange={() => onSelectEntry(c)}
+                  />
+                  <span className="font-mono text-slate-700">{c}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
