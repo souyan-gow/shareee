@@ -31,6 +31,40 @@ export function describeError(e: unknown): EditCommitError {
   return { kind: 'other', message: '不明なエラーが発生しました' };
 }
 
+function isFastForwardError(e: unknown): boolean {
+  if (!(e instanceof GitHubAPIError) || e.status !== 422) return false;
+  const body = e.body;
+  if (typeof body !== 'object' || body === null) return false;
+  const msg = (body as { message?: unknown }).message;
+  if (typeof msg !== 'string') return false;
+  return /fast forward|cannot lock ref|reference does not exist|sha does not match/i.test(
+    msg,
+  );
+}
+
+async function withConflictRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 500,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxAttempts - 1 && isFastForwardError(e)) {
+        await new Promise((r) =>
+          setTimeout(r, baseDelayMs * (attempt + 1)),
+        );
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
 export async function commitEntryPatch(
   pat: string,
   id: string,
@@ -38,14 +72,16 @@ export async function commitEntryPatch(
   message: string,
 ): Promise<Manifest> {
   const client = new GitHubClient(pat, REPO_OWNER, REPO_NAME);
-  const { manifest } = await fetchManifest(client, DEFAULT_BRANCH);
-  const next = updateEntry(manifest, id, patch);
-  await client.commitFiles({
-    branch: DEFAULT_BRANCH,
-    message,
-    files: [{ path: 'manifest.json', content: serializeManifest(next) }],
+  return withConflictRetry(async () => {
+    const { manifest } = await fetchManifest(client, DEFAULT_BRANCH);
+    const next = updateEntry(manifest, id, patch);
+    await client.commitFiles({
+      branch: DEFAULT_BRANCH,
+      message,
+      files: [{ path: 'manifest.json', content: serializeManifest(next) }],
+    });
+    return next;
   });
-  return next;
 }
 
 export async function commitDelete(
@@ -53,19 +89,21 @@ export async function commitDelete(
   entry: FileEntry,
 ): Promise<Manifest> {
   const client = new GitHubClient(pat, REPO_OWNER, REPO_NAME);
-  const [{ manifest }, existing] = await Promise.all([
-    fetchManifest(client, DEFAULT_BRANCH),
-    client.listFilesByPrefix(
-      [`files/${entry.id}/`, `thumbnails/${entry.id}.`],
-      DEFAULT_BRANCH,
-    ),
-  ]);
-  const next = removeEntry(manifest, entry.id);
-  await client.commitFiles({
-    branch: DEFAULT_BRANCH,
-    message: `chore: delete ${entry.displayName} (${entry.id})`,
-    files: [{ path: 'manifest.json', content: serializeManifest(next) }],
-    deletions: existing,
+  return withConflictRetry(async () => {
+    const [{ manifest }, existing] = await Promise.all([
+      fetchManifest(client, DEFAULT_BRANCH),
+      client.listFilesByPrefix(
+        [`files/${entry.id}/`, `thumbnails/${entry.id}.`],
+        DEFAULT_BRANCH,
+      ),
+    ]);
+    const next = removeEntry(manifest, entry.id);
+    await client.commitFiles({
+      branch: DEFAULT_BRANCH,
+      message: `chore: delete ${entry.displayName} (${entry.id})`,
+      files: [{ path: 'manifest.json', content: serializeManifest(next) }],
+      deletions: existing,
+    });
+    return next;
   });
-  return next;
 }
