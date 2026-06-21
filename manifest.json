@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-21T11:51:47.905Z",
+  "updatedAt": "2026-06-21T12:42:40.771Z",
   "files": [
     {
       "id": "01KVHJXFYCKC7NHAAAZ26WGC4Z",
@@ -67,6 +67,19 @@
       "kind": "single",
       "uploadedAt": "2026-06-20T10:27:49.750Z",
       "updatedAt": "2026-06-20T10:37:51.057Z",
+      "size": 139,
+      "uploader": "souyan-gow",
+      "thumbnail": null
+    },
+    {
+      "id": "01KVN38PN424TXCCFQ5X3MJ3G3",
+      "displayName": "Desktop",
+      "folder": "",
+      "tags": [],
+      "entryPath": "test2-1.html",
+      "kind": "zip",
+      "uploadedAt": "2026-06-21T12:42:40.164Z",
+      "updatedAt": "2026-06-21T12:42:40.164Z",
       "size": 139,
       "uploader": "souyan-gow",
       "thumbnail": null
