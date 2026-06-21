@@ -53,19 +53,19 @@ export async function commitDelete(
   entry: FileEntry,
 ): Promise<Manifest> {
   const client = new GitHubClient(pat, REPO_OWNER, REPO_NAME);
-  const [{ manifest }, fileList] = await Promise.all([
+  const [{ manifest }, existing] = await Promise.all([
     fetchManifest(client, DEFAULT_BRANCH),
-    client.listFilesByPrefix(`files/${entry.id}/`, DEFAULT_BRANCH),
+    client.listFilesByPrefix(
+      [`files/${entry.id}/`, `thumbnails/${entry.id}.`],
+      DEFAULT_BRANCH,
+    ),
   ]);
   const next = removeEntry(manifest, entry.id);
-  const deletions = Array.from(
-    new Set([...fileList, `thumbnails/${entry.id}.png`]),
-  );
   await client.commitFiles({
     branch: DEFAULT_BRANCH,
     message: `chore: delete ${entry.displayName} (${entry.id})`,
     files: [{ path: 'manifest.json', content: serializeManifest(next) }],
-    deletions,
+    deletions: existing,
   });
   return next;
 }

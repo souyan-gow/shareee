@@ -123,9 +123,10 @@ export class GitHubClient {
   }
 
   async listFilesByPrefix(
-    prefix: string,
+    prefix: string | string[],
     branch: string,
   ): Promise<string[]> {
+    const prefixes = Array.isArray(prefix) ? prefix : [prefix];
     const ref = await this.request<{ object: { sha: string } }>(
       `/repos/${this.owner}/${this.repo}/git/ref/heads/${encodeURIComponent(branch)}`,
     );
@@ -145,7 +146,10 @@ export class GitHubClient {
       );
     }
     return tree.tree
-      .filter((e) => e.type === 'blob' && e.path.startsWith(prefix))
+      .filter(
+        (e) =>
+          e.type === 'blob' && prefixes.some((p) => e.path.startsWith(p)),
+      )
       .map((e) => e.path);
   }
 
